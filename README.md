@@ -99,11 +99,11 @@ python server/server.py
 
 ### C# 上位机检测结果
 
-（插入截图）
+![检测结果](docs/detection.gif)
 
 ### 机械臂抓取过程
 
-（插入 GIF）
+![抓取过程](docs/grasp.gif)
 
 ## 关键技术点
 

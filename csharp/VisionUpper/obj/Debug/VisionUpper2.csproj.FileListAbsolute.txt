@@ -1,0 +1,12 @@
+D:\CsharpText\VisionUpper2\bin\Debug\VisionUpper2.exe.config
+D:\CsharpText\VisionUpper2\bin\Debug\VisionUpper2.exe
+D:\CsharpText\VisionUpper2\bin\Debug\VisionUpper2.pdb
+D:\CsharpText\VisionUpper2\bin\Debug\Newtonsoft.Json.dll
+D:\CsharpText\VisionUpper2\bin\Debug\Newtonsoft.Json.xml
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUpper2.csproj.AssemblyReference.cache
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUpper2.Properties.Resources.resources
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUpper2.csproj.GenerateResource.cache
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUpper2.csproj.CoreCompileInputs.cache
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUp.68302DFE.Up2Date
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUpper2.exe
+D:\CsharpText\VisionUpper2\obj\Debug\VisionUpper2.pdb

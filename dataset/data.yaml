@@ -1,0 +1,5 @@
+path: D:/Vision_Machine/dataset
+train: images
+val: images
+nc: 1
+names: ['cube']

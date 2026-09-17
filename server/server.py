@@ -1,0 +1,75 @@
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+from ultralytics import YOLO
+import numpy as np
+import cv2
+import io
+from PIL import Image
+app = FastAPI()
+
+# 加载你训练好的模型
+model = YOLO(r"D:\Vision_Machine\runs\detect\cube_detector\weights\best.pt")
+# ===== 相机参数（与生成数据集时完全一致）=====
+width, height = 640, 480
+fov = 60
+fx = width / (2 * np.tan(np.radians(fov / 2)))
+fy = fx
+cx, cy = width / 2, height / 2
+camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+
+cam_pos = np.array([0.5, 0.0, 0.8])
+cam_target = np.array([0.5, 0.0, 0.0])
+cam_up = np.array([0, 1, 0])
+forward = (cam_target - cam_pos) / np.linalg.norm(cam_target - cam_pos)
+right = np.cross(forward, cam_up) / np.linalg.norm(np.cross(forward, cam_up))
+up = np.cross(right, forward)
+R = np.array([right, -up, forward]).T
+t = -R @ cam_pos
+
+
+def pixel_to_3d(u, v, plane_z=0.05):
+    pt_cam = np.linalg.inv(camera_matrix) @ np.array([u, v, 1.0])
+    pt_cam = pt_cam / np.linalg.norm(pt_cam)
+    direction_world = np.linalg.inv(R) @ pt_cam
+    direction_world = direction_world / np.linalg.norm(direction_world)
+    if abs(direction_world[2]) < 1e-6:
+        return None
+    t_scale = (plane_z - cam_pos[2]) / direction_world[2]
+    return cam_pos + t_scale * direction_world
+
+
+@app.post("/detect")
+async def detect(file: UploadFile = File(...)):
+    # 读取上传的图片
+    contents = await file.read()
+    image = Image.open(io.BytesIO(contents))
+
+    # YOLO 推理
+    results = model(image)
+    boxes_data = []
+
+    for box in results[0].boxes:
+        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+        conf = float(box.conf[0].cpu().numpy())
+        u, v = (x1 + x2) / 2, (y1 + y2) / 2
+
+        # 坐标反投影
+        pos_3d = pixel_to_3d(u, v, plane_z=0.05)
+        if pos_3d is not None:
+            boxes_data.append({
+                "class_id": int(box.cls[0].cpu().numpy()),
+                "confidence": round(conf, 3),
+                "bbox_2d": [float(x1), float(y1), float(x2), float(y2)],
+                "center_2d": [float(u), float(v)],
+                "position_3d": [round(float(pos_3d[0]), 4),
+                                round(float(pos_3d[1]), 4),
+                                round(float(pos_3d[2]), 4)]
+            })
+
+    return JSONResponse({"count": len(boxes_data), "objects": boxes_data})
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)

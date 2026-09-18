@@ -5,11 +5,15 @@ import numpy as np
 import cv2
 import io
 from PIL import Image
-app = FastAPI()
+import pybullet as p
+import pybullet_data
+import time
+import random
 
-# 加载你训练好的模型
-model = YOLO(r"D:\Vision_Machine\runs\detect\cube_detector\weights\best.pt")
-# ===== 相机参数（与生成数据集时完全一致）=====
+app = FastAPI()
+model = YOLO(r"D:\Vision_Machine\weights\best.pt")
+
+# ===== 相机参数 =====
 width, height = 640, 480
 fov = 60
 fx = width / (2 * np.tan(np.radians(fov / 2)))
@@ -38,13 +42,62 @@ def pixel_to_3d(u, v, plane_z=0.05):
     return cam_pos + t_scale * direction_world
 
 
+# ===== PyBullet 懒加载 =====
+_pybullet_initialized = False
+robot_id = None
+end_effector_index = 6
+num_joints = 7
+cube_ids = []
+cube_positions = []
+
+
+def init_pybullet():
+    global _pybullet_initialized, robot_id, cube_ids, cube_positions
+    if _pybullet_initialized:
+        return
+    p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    p.setGravity(0, 0, -9.8)
+    p.loadURDF("plane.urdf")
+    robot_id = p.loadURDF("kuka_iiwa/model.urdf", useFixedBase=True)
+
+    random.seed(42)
+    cube_ids = []
+    cube_positions = []
+    for i in range(3):
+        x = random.uniform(0.35, 0.65)
+        y = random.uniform(-0.15, 0.15)
+        cube_id = p.loadURDF("cube_small.urdf", [x, y, 0.05])
+        cube_ids.append(cube_id)
+        cube_positions.append([x, y, 0.05])
+
+    _pybullet_initialized = True
+
+
+def move_to(target_pos, steps=800):
+    joint_poses = p.calculateInverseKinematics(
+        robot_id, end_effector_index,
+        [float(target_pos[0]), float(target_pos[1]), float(target_pos[2])],
+        lowerLimits=[-2.967, -2.094, -2.967, -2.094, -2.967, -2.094, -3.054],
+        upperLimits=[2.967, 2.094, 2.967, 2.094, 2.967, 2.094, 3.054],
+        jointRanges=[5.934, 4.188, 5.934, 4.188, 5.934, 4.188, 6.108],
+        restPoses=[0, 0, 0, 0, 0, 0, 0],
+        maxNumIterations=200,
+        residualThreshold=0.0001
+    )
+    for i in range(num_joints):
+        p.setJointMotorControl2(robot_id, i, p.POSITION_CONTROL,
+                                targetPosition=joint_poses[i], force=500)
+    for _ in range(steps):
+        p.stepSimulation()
+        time.sleep(1./240.)
+
+
 @app.post("/detect")
 async def detect(file: UploadFile = File(...)):
-    # 读取上传的图片
     contents = await file.read()
     image = Image.open(io.BytesIO(contents))
 
-    # YOLO 推理
     results = model(image)
     boxes_data = []
 
@@ -53,7 +106,6 @@ async def detect(file: UploadFile = File(...)):
         conf = float(box.conf[0].cpu().numpy())
         u, v = (x1 + x2) / 2, (y1 + y2) / 2
 
-        # 坐标反投影
         pos_3d = pixel_to_3d(u, v, plane_z=0.05)
         if pos_3d is not None:
             boxes_data.append({
@@ -69,7 +121,55 @@ async def detect(file: UploadFile = File(...)):
     return JSONResponse({"count": len(boxes_data), "objects": boxes_data})
 
 
+@app.post("/pick")
+async def pick(file: UploadFile = File(...)):
+    init_pybullet()
+
+    contents = await file.read()
+    image = Image.open(io.BytesIO(contents))
+
+    results = model(image)
+    if len(results[0].boxes) == 0:
+        return JSONResponse({"success": False, "message": "未检测到目标"})
+
+    box = results[0].boxes[0]
+    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+    u, v = (x1 + x2) / 2, (y1 + y2) / 2
+    target_pos = pixel_to_3d(u, v)
+    if target_pos is None:
+        return JSONResponse({"success": False, "message": "坐标反投影失败"})
+
+    # 匹配最近的真实方块
+    target_np = np.array(target_pos)
+    distances = [np.linalg.norm(target_np - np.array(cp)) for cp in cube_positions]
+    closest_idx = int(np.argmin(distances))
+    cube_to_pick = cube_ids[closest_idx]
+
+    # 执行抓取
+    move_to([target_pos[0], target_pos[1], target_pos[2] + 0.1])
+    move_to([target_pos[0], target_pos[1], target_pos[2] + 0.02])
+
+    constraint_id = p.createConstraint(
+        robot_id, end_effector_index, cube_to_pick, -1,
+        p.JOINT_FIXED, [0, 0, 0], [0, 0, 0], [0, 0, 0]
+    )
+
+    move_to([target_pos[0], target_pos[1], target_pos[2] + 0.3])
+
+    cube_pos, _ = p.getBasePositionAndOrientation(cube_to_pick)
+    lift_height = float(cube_pos[2])
+
+    move_to([0.4, 0.25, 0.2])
+    p.removeConstraint(constraint_id)
+
+    return JSONResponse({
+        "success": True,
+        "target_3d": [float(target_pos[0]), float(target_pos[1]), float(target_pos[2])],
+        "lift_height": lift_height,
+        "message": f"抓取成功，方块从 0.05 米抬升到 {lift_height:.3f} 米"
+    })
+
+
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="127.0.0.1", port=8000)
